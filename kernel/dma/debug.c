@@ -558,6 +558,13 @@ static void add_dma_entry(struct dma_debug_entry *entry)
 	struct hash_bucket *bucket;
 	unsigned long flags;
 	int rc;
+	unsigned long pfn, epfn;
+
+	for (pfn = entry->pfn,
+	    epfn = entry->pfn +
+		   (entry->offset + entry->size + PAGE_SIZE - 1) / PAGE_SIZE;
+	     pfn != epfn; pfn++)
+		inc_page_usage(pfn);
 
 	bucket = get_hash_bucket(entry, &flags);
 	hash_bucket_add(bucket, entry);
@@ -948,6 +955,7 @@ static void check_unmap(struct dma_debug_entry *ref)
 	struct dma_debug_entry *entry;
 	struct hash_bucket *bucket;
 	unsigned long flags;
+	unsigned long pfn, epfn;
 
 	bucket = get_hash_bucket(ref, &flags);
 	entry = bucket_find_exact(bucket, ref);
@@ -1032,6 +1040,12 @@ static void check_unmap(struct dma_debug_entry *ref)
 			   ref->dev_addr, ref->size,
 			   type2name[entry->type]);
 	}
+
+	for (pfn = entry->pfn,
+	    epfn = entry->pfn +
+		   (entry->offset + entry->size + PAGE_SIZE - 1) / PAGE_SIZE;
+	     pfn != epfn; pfn++)
+		dec_page_usage(pfn);
 
 	hash_bucket_del(entry);
 	dma_entry_free(entry);
