@@ -253,7 +253,6 @@ int ib_init_ucontext(struct uverbs_attr_bundle *attrs)
 		goto err_uncharge;
 
 	rdma_restrack_add(&ucontext->res);
-
 	/*
 	 * Make sure that ib_uverbs_get_ucontext() sees the pointer update
 	 * only after all writes to setup the ucontext have completed
@@ -449,8 +448,8 @@ static int ib_uverbs_alloc_pd(struct uverbs_attr_bundle *attrs)
 	ret = ib_dev->ops.alloc_pd(pd, &attrs->driver_udata);
 	if (ret)
 		goto err_alloc;
-	rdma_restrack_add(&pd->res);
 
+	rdma_restrack_add(&pd->res);
 	uobj->object = pd;
 	uobj_finalize_uobj_create(uobj, attrs);
 
@@ -753,7 +752,6 @@ static int ib_uverbs_reg_mr(struct uverbs_attr_bundle *attrs)
 	rdma_restrack_new(&mr->res, RDMA_RESTRACK_MR);
 	rdma_restrack_set_name(&mr->res, NULL);
 	rdma_restrack_add(&mr->res);
-
 	uobj->object = mr;
 	uobj_put_obj_read(pd);
 	uobj_finalize_uobj_create(uobj, attrs);
@@ -1017,8 +1015,8 @@ static int create_cq(struct uverbs_attr_bundle *attrs,
 	ret = ib_dev->ops.create_cq(cq, &attr, &attrs->driver_udata);
 	if (ret)
 		goto err_free;
-	rdma_restrack_add(&cq->res);
 
+	rdma_restrack_add(&cq->res);
 	obj->uevent.uobject.object = cq;
 	obj->uevent.event_file = READ_ONCE(attrs->ufile->default_async_file);
 	if (obj->uevent.event_file)

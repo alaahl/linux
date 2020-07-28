@@ -217,21 +217,22 @@ EXPORT_SYMBOL(rdma_restrack_new);
  * rdma_restrack_add() - add object to the reource tracking database
  * @res:  resource entry
  */
-void rdma_restrack_add(struct rdma_restrack_entry *res)
+int rdma_restrack_add(struct rdma_restrack_entry *res)
 {
 	struct ib_device *dev = res_to_dev(res);
 	struct rdma_restrack_root *rt;
 	int ret = 0;
 
 	if (!dev)
-		return;
+		return -ENODEV;
 
 	if (res->no_track)
 		goto out;
 
 	rt = &dev->res[res->type];
 
-	if (res->type == RDMA_RESTRACK_QP) {
+	switch (res->type) {
+	case RDMA_RESTRACK_QP: {
 		/* Special case to ensure that LQPN points to right QP */
 		struct ib_qp *qp = container_of(res, struct ib_qp, res);
 
@@ -244,21 +245,34 @@ void rdma_restrack_add(struct rdma_restrack_entry *res)
 		ret = xa_insert(&rt->xa, res->id, res, GFP_KERNEL);
 		if (ret)
 			res->id = 0;
-	} else if (res->type == RDMA_RESTRACK_COUNTER) {
+	} break;
+	case RDMA_RESTRACK_COUNTER: {
 		/* Special case to ensure that cntn points to right counter */
-		struct rdma_counter *counter;
+		struct rdma_counter *counter = container_of(res, struct rdma_counter, res);
 
-		counter = container_of(res, struct rdma_counter, res);
 		ret = xa_insert(&rt->xa, counter->id, res, GFP_KERNEL);
-		res->id = ret ? 0 : counter->id;
-	} else {
+		if (ret)
+			break;
+		res->id = counter->id;
+	} break;
+	default:
 		ret = xa_alloc_cyclic(&rt->xa, &res->id, res, xa_limit_32b,
 				      &rt->next_id, GFP_KERNEL);
 	}
+	if (ret) {
+		ibdev_err(
+			dev,
+			"%s %s object failed to be added to restrack DB, err %d\n",
+			rdma_is_kernel_res(res) ? "Kernel" : "User",
+			type2str(res->type), ret);
+		res->no_track = true;
+	}
 
 out:
-	if (!ret)
-		res->valid = true;
+	if (ret)
+		return ret;
+	res->valid = true;
+	return 0;
 }
 EXPORT_SYMBOL(rdma_restrack_add);
 
@@ -317,7 +331,6 @@ EXPORT_SYMBOL(rdma_restrack_put);
  */
 void rdma_restrack_del(struct rdma_restrack_entry *res)
 {
-	struct rdma_restrack_entry *old;
 	struct rdma_restrack_root *rt;
 	struct ib_device *dev;
 
@@ -337,11 +350,8 @@ void rdma_restrack_del(struct rdma_restrack_entry *res)
 		return;
 
 	rt = &dev->res[res->type];
-
-	old = xa_erase(&rt->xa, res->id);
-	if (res->type == RDMA_RESTRACK_MR || res->type == RDMA_RESTRACK_QP)
+	if (xa_cmpxchg(&rt->xa, res->id, res, NULL, GFP_KERNEL) != res)
 		return;
-	WARN_ON(old != res);
 
 out:
 	res->valid = false;

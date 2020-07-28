@@ -831,10 +831,9 @@ static void ufile_destroy_ucontext(struct ib_uverbs_file *ufile,
 	ib_rdmacg_uncharge(&ucontext->cg_obj, ib_dev,
 			   RDMACG_RESOURCE_HCA_HANDLE);
 
-	rdma_restrack_del(&ucontext->res);
-
 	ib_dev->ops.dealloc_ucontext(ucontext);
 	WARN_ON(!xa_empty(&ucontext->mmap_xa));
+	rdma_restrack_del(&ucontext->res);
 	kfree(ucontext);
 
 	ufile->ucontext = NULL;

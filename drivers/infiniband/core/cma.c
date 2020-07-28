@@ -451,13 +451,20 @@ static int cma_igmp_send(struct net_device *ndev, union ib_gid *mgid, bool join)
 static int _cma_attach_to_dev(struct rdma_id_private *id_priv,
 			      struct cma_device *cma_dev)
 {
+	int ret;
+
 	cma_dev_get(cma_dev);
 	id_priv->cma_dev = cma_dev;
 	id_priv->id.device = cma_dev->device;
 	id_priv->id.route.addr.dev_addr.transport =
 		rdma_node_get_transport(cma_dev->device->node_type);
 	list_add_tail(&id_priv->list, &cma_dev->id_list);
-	rdma_restrack_add(&id_priv->res);
+	ret = rdma_restrack_add(&id_priv->res);
+	if (ret) {
+		list_del(&cma_dev->id_list);
+		cma_dev_put(cma_dev);
+		return ret;
+	}
 
 	trace_cm_id_attach(id_priv, cma_dev->device);
 	return 0;

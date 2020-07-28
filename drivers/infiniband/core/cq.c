@@ -267,10 +267,25 @@ struct ib_cq *__ib_alloc_cq(struct ib_device *dev, void *private, int nr_cqe,
 		goto out_destroy_cq;
 	}
 
-	rdma_restrack_add(&cq->res);
+	ret = rdma_restrack_add(&cq->res);
+	if (ret)
+		goto out_poll_cq;
+
 	trace_cq_alloc(cq, nr_cqe, comp_vector, poll_ctx);
 	return cq;
 
+out_poll_cq:
+	switch (cq->poll_ctx) {
+	case IB_POLL_SOFTIRQ:
+		irq_poll_disable(&cq->iop);
+		break;
+	case IB_POLL_WORKQUEUE:
+	case IB_POLL_UNBOUND_WORKQUEUE:
+		cancel_work_sync(&cq->work);
+		break;
+	default:
+		break;
+	}
 out_destroy_cq:
 	rdma_dim_destroy(cq);
 	cq->device->ops.destroy_cq(cq, NULL);

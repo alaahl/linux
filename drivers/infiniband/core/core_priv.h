@@ -327,6 +327,7 @@ static inline struct ib_qp *_ib_create_qp(struct ib_device *dev,
 	enum ib_qp_type qp_type = attr->qp_type;
 	struct ib_qp *qp;
 	bool is_xrc;
+	int ret;
 
 	if (!dev->ops.create_qp)
 		return ERR_PTR(-EOPNOTSUPP);
@@ -364,9 +365,15 @@ static inline struct ib_qp *_ib_create_qp(struct ib_device *dev,
 	is_xrc = qp_type == IB_QPT_XRC_INI || qp_type == IB_QPT_XRC_TGT;
 	if ((qp_type < IB_QPT_MAX && !is_xrc) || qp_type == IB_QPT_DRIVER) {
 		rdma_restrack_parent_name(&qp->res, &pd->res);
-		rdma_restrack_add(&qp->res);
+		ret = rdma_restrack_add(&qp->res);
+		if (ret)
+			goto err;
 	}
 	return qp;
+err:
+	rdma_restrack_put(&qp->res);
+	dev->ops.destroy_qp(qp, udata);
+	return ERR_PTR(ret);
 }
 
 struct rdma_dev_addr;

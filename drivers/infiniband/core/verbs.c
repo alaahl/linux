@@ -276,12 +276,12 @@ struct ib_pd *__ib_alloc_pd(struct ib_device *device, unsigned int flags,
 	rdma_restrack_set_name(&pd->res, caller);
 
 	ret = device->ops.alloc_pd(pd, NULL);
-	if (ret) {
-		rdma_restrack_put(&pd->res);
-		kfree(pd);
-		return ERR_PTR(ret);
-	}
-	rdma_restrack_add(&pd->res);
+	if (ret)
+		goto err_alloc;
+
+	ret = rdma_restrack_add(&pd->res);
+	if (ret)
+		goto err_restrack;
 
 	if (device->attrs.device_cap_flags & IB_DEVICE_LOCAL_DMA_LKEY)
 		pd->local_dma_lkey = device->local_dma_lkey;
@@ -318,6 +318,13 @@ struct ib_pd *__ib_alloc_pd(struct ib_device *device, unsigned int flags,
 	}
 
 	return pd;
+
+err_restrack:
+	device->ops.dealloc_pd(pd, NULL);
+err_alloc:
+	rdma_restrack_put(&pd->res);
+	kfree(pd);
+	return ERR_PTR(ret);
 }
 EXPORT_SYMBOL(__ib_alloc_pd);
 
@@ -2002,14 +2009,21 @@ struct ib_cq *__ib_create_cq(struct ib_device *device,
 	rdma_restrack_set_name(&cq->res, caller);
 
 	ret = device->ops.create_cq(cq, cq_attr, NULL);
-	if (ret) {
-		rdma_restrack_put(&cq->res);
-		kfree(cq);
-		return ERR_PTR(ret);
-	}
+	if (ret)
+		goto err_create;
 
-	rdma_restrack_add(&cq->res);
+	ret = rdma_restrack_add(&cq->res);
+	if (ret)
+		goto err_restrack;
+
 	return cq;
+
+err_restrack:
+	device->ops.destroy_cq(cq, NULL);
+err_create:
+	rdma_restrack_put(&cq->res);
+	kfree(cq);
+	return ERR_PTR(ret);
 }
 EXPORT_SYMBOL(__ib_create_cq);
 
@@ -2060,6 +2074,7 @@ struct ib_mr *ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 			     u64 virt_addr, int access_flags)
 {
 	struct ib_mr *mr;
+	int ret;
 
 	if (access_flags & IB_ACCESS_ON_DEMAND) {
 		if (!(pd->device->attrs.device_cap_flags &
@@ -2082,7 +2097,12 @@ struct ib_mr *ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 
 	rdma_restrack_new(&mr->res, RDMA_RESTRACK_MR);
 	rdma_restrack_parent_name(&mr->res, &pd->res);
-	rdma_restrack_add(&mr->res);
+	ret = rdma_restrack_add(&mr->res);
+	if (ret) {
+		rdma_restrack_put(&mr->res);
+		pd->device->ops.dereg_mr(mr, NULL);
+		mr = ERR_PTR(ret);
+	}
 
 	return mr;
 }
@@ -2139,6 +2159,7 @@ struct ib_mr *ib_alloc_mr(struct ib_pd *pd, enum ib_mr_type mr_type,
 			  u32 max_num_sg)
 {
 	struct ib_mr *mr;
+	int ret;
 
 	if (!pd->device->ops.alloc_mr) {
 		mr = ERR_PTR(-EOPNOTSUPP);
@@ -2166,7 +2187,13 @@ struct ib_mr *ib_alloc_mr(struct ib_pd *pd, enum ib_mr_type mr_type,
 
 	rdma_restrack_new(&mr->res, RDMA_RESTRACK_MR);
 	rdma_restrack_parent_name(&mr->res, &pd->res);
-	rdma_restrack_add(&mr->res);
+	ret = rdma_restrack_add(&mr->res);
+	if (ret) {
+		rdma_restrack_put(&mr->res);
+		pd->device->ops.dereg_mr(mr, NULL);
+		mr = ERR_PTR(ret);
+	}
+
 out:
 	trace_mr_alloc(pd, mr_type, max_num_sg, mr);
 	return mr;
@@ -2191,6 +2218,7 @@ struct ib_mr *ib_alloc_mr_integrity(struct ib_pd *pd,
 {
 	struct ib_mr *mr;
 	struct ib_sig_attrs *sig_attrs;
+	int ret;
 
 	if (!pd->device->ops.alloc_mr_integrity ||
 	    !pd->device->ops.map_mr_sg_pi) {
@@ -2227,7 +2255,12 @@ struct ib_mr *ib_alloc_mr_integrity(struct ib_pd *pd,
 
 	rdma_restrack_new(&mr->res, RDMA_RESTRACK_MR);
 	rdma_restrack_parent_name(&mr->res, &pd->res);
-	rdma_restrack_add(&mr->res);
+	ret = rdma_restrack_add(&mr->res);
+	if (ret) {
+		rdma_restrack_put(&mr->res);
+		pd->device->ops.dereg_mr(mr, NULL);
+		mr = ERR_PTR(ret);
+	}
 out:
 	trace_mr_integ_alloc(pd, max_num_data_sg, max_num_meta_sg, mr);
 	return mr;
