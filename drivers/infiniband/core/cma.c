@@ -448,8 +448,8 @@ static int cma_igmp_send(struct net_device *ndev, union ib_gid *mgid, bool join)
 	return (in_dev) ? 0 : -ENODEV;
 }
 
-static void _cma_attach_to_dev(struct rdma_id_private *id_priv,
-			       struct cma_device *cma_dev)
+static int _cma_attach_to_dev(struct rdma_id_private *id_priv,
+			      struct cma_device *cma_dev)
 {
 	cma_dev_get(cma_dev);
 	id_priv->cma_dev = cma_dev;
@@ -460,15 +460,22 @@ static void _cma_attach_to_dev(struct rdma_id_private *id_priv,
 	rdma_restrack_add(&id_priv->res);
 
 	trace_cm_id_attach(id_priv, cma_dev->device);
+	return 0;
 }
 
-static void cma_attach_to_dev(struct rdma_id_private *id_priv,
-			      struct cma_device *cma_dev)
+static int cma_attach_to_dev(struct rdma_id_private *id_priv,
+			     struct cma_device *cma_dev)
 {
-	_cma_attach_to_dev(id_priv, cma_dev);
+	int ret;
+
+	ret = _cma_attach_to_dev(id_priv, cma_dev);
+	if (ret)
+		return ret;
+
 	id_priv->gid_type =
 		cma_dev->default_gid_type[id_priv->id.port_num -
 					  rdma_start_port(cma_dev->device)];
+	return 0;
 }
 
 static void cma_release_dev(struct rdma_id_private *id_priv)
@@ -633,8 +640,7 @@ static int cma_acquire_dev_by_src_ip(struct rdma_id_private *id_priv)
 			if (!IS_ERR(sgid_attr)) {
 				id_priv->id.port_num = port;
 				cma_bind_sgid_attr(id_priv, sgid_attr);
-				cma_attach_to_dev(id_priv, cma_dev);
-				ret = 0;
+				ret = cma_attach_to_dev(id_priv, cma_dev);
 				goto out;
 			}
 		}
@@ -663,6 +669,7 @@ static int cma_ib_acquire_dev(struct rdma_id_private *id_priv,
 	const struct ib_gid_attr *sgid_attr;
 	enum ib_gid_type gid_type;
 	union ib_gid gid;
+	int ret;
 
 	if (dev_addr->dev_type != ARPHRD_INFINIBAND &&
 	    id_priv->id.ps == RDMA_PS_IPOIB)
@@ -688,9 +695,9 @@ static int cma_ib_acquire_dev(struct rdma_id_private *id_priv,
 	 * cma_process_remove().
 	 */
 	mutex_lock(&lock);
-	cma_attach_to_dev(id_priv, listen_id_priv->cma_dev);
+	ret = cma_attach_to_dev(id_priv, listen_id_priv->cma_dev);
 	mutex_unlock(&lock);
-	return 0;
+	return ret;
 }
 
 static int cma_iw_acquire_dev(struct rdma_id_private *id_priv,
@@ -745,7 +752,7 @@ static int cma_iw_acquire_dev(struct rdma_id_private *id_priv,
 
 out:
 	if (!ret)
-		cma_attach_to_dev(id_priv, cma_dev);
+		ret = cma_attach_to_dev(id_priv, cma_dev);
 
 	mutex_unlock(&lock);
 	return ret;
@@ -762,7 +769,7 @@ static int cma_resolve_ib_dev(struct rdma_id_private *id_priv)
 	unsigned int p;
 	u16 pkey, index;
 	enum ib_port_state port_state;
-	int i;
+	int i, ret;
 
 	cma_dev = NULL;
 	addr = (struct sockaddr_ib *) cma_dst_addr(id_priv);
@@ -805,8 +812,10 @@ static int cma_resolve_ib_dev(struct rdma_id_private *id_priv)
 	return -ENODEV;
 
 found:
-	cma_attach_to_dev(id_priv, cma_dev);
+	ret = cma_attach_to_dev(id_priv, cma_dev);
 	mutex_unlock(&lock);
+	if (ret)
+		return ret;
 	addr = (struct sockaddr_ib *)cma_src_addr(id_priv);
 	memcpy(&addr->sib_addr, &sgid, sizeof(sgid));
 	cma_translate_ib(addr, &id_priv->id.route.addr.dev_addr);
@@ -2517,7 +2526,9 @@ static int cma_listen_on_dev(struct rdma_id_private *id_priv,
 	memcpy(cma_src_addr(dev_id_priv), cma_src_addr(id_priv),
 	       rdma_addr_size(cma_src_addr(id_priv)));
 
-	_cma_attach_to_dev(dev_id_priv, cma_dev);
+	ret = _cma_attach_to_dev(dev_id_priv, cma_dev);
+	if (ret)
+		goto err_attach;
 	list_add_tail(&dev_id_priv->listen_list, &id_priv->listen_list);
 	cma_id_get(id_priv);
 	dev_id_priv->internal_id = 1;
@@ -2531,6 +2542,7 @@ static int cma_listen_on_dev(struct rdma_id_private *id_priv,
 	return 0;
 err_listen:
 	list_del(&id_priv->listen_list);
+err_attach:
 	dev_warn(&cma_dev->device->dev, "RDMA CMA: %s, error %d\n", __func__, ret);
 	rdma_destroy_id(&dev_id_priv->id);
 	return ret;
@@ -3125,7 +3137,9 @@ port_found:
 	rdma_addr_set_sgid(&id_priv->id.route.addr.dev_addr, &gid);
 	ib_addr_set_pkey(&id_priv->id.route.addr.dev_addr, pkey);
 	id_priv->id.port_num = p;
-	cma_attach_to_dev(id_priv, cma_dev);
+	ret = cma_attach_to_dev(id_priv, cma_dev);
+	if (ret)
+		goto out;
 	cma_set_loopback(cma_src_addr(id_priv));
 out:
 	mutex_unlock(&lock);
