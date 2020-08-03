@@ -60,15 +60,6 @@ enum rdma_restrack_type {
  */
 struct rdma_restrack_entry {
 	/**
-	 * @valid: validity indicator
-	 *
-	 * The entries are filled during rdma_restrack_add,
-	 * can be attempted to be free during rdma_restrack_del.
-	 *
-	 * As an example for that, see mlx5 QPs with type MLX5_IB_QPT_HW_GSI
-	 */
-	bool			valid;
-	/**
 	 * @no_track: don't add this entry to restrack DB
 	 *
 	 * This field is used to mark an entry that doesn't need to be added to

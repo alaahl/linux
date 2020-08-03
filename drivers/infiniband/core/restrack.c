@@ -142,7 +142,6 @@ static struct ib_device *res_to_dev(struct rdma_restrack_entry *res)
 	case RDMA_RESTRACK_COUNTER:
 		return container_of(res, struct rdma_counter, res)->device;
 	default:
-		WARN_ONCE(true, "Wrong resource tracking type %u\n", res->type);
 		return NULL;
 	}
 }
@@ -223,7 +222,7 @@ int rdma_restrack_add(struct rdma_restrack_entry *res)
 	struct rdma_restrack_root *rt;
 	int ret = 0;
 
-	if (!dev)
+	if (WARN_ONCE(!dev, "Wrong resource tracking type %u\n", res->type))
 		return -ENODEV;
 
 	if (res->no_track)
@@ -269,10 +268,7 @@ int rdma_restrack_add(struct rdma_restrack_entry *res)
 	}
 
 out:
-	if (ret)
-		return ret;
-	res->valid = true;
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL(rdma_restrack_add);
 
@@ -331,30 +327,20 @@ EXPORT_SYMBOL(rdma_restrack_put);
  */
 void rdma_restrack_del(struct rdma_restrack_entry *res)
 {
+	struct ib_device *dev = res_to_dev(res);
 	struct rdma_restrack_root *rt;
-	struct ib_device *dev;
 
-	if (!res->valid) {
-		if (res->task) {
-			put_task_struct(res->task);
-			res->task = NULL;
-		}
+	if (!dev)
 		return;
-	}
 
 	if (res->no_track)
 		goto out;
-
-	dev = res_to_dev(res);
-	if (WARN_ON(!dev))
-		return;
 
 	rt = &dev->res[res->type];
 	if (xa_cmpxchg(&rt->xa, res->id, res, NULL, GFP_KERNEL) != res)
 		return;
 
 out:
-	res->valid = false;
 	rdma_restrack_put(res);
 	wait_for_completion(&res->comp);
 }
