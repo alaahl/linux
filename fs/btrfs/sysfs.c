@@ -1626,13 +1626,12 @@ void btrfs_sysfs_feature_update(struct btrfs_fs_info *fs_info,
 {
 	struct btrfs_fs_devices *fs_devs;
 	struct kobject *fsid_kobj;
-	u64 features;
-	int ret;
+	int __maybe_unused ret;
 
 	if (!fs_info)
 		return;
 
-	features = get_features(fs_info, set);
+	get_features(fs_info, set);
 	ASSERT(bit & supported_feature_masks[set]);
 
 	fs_devs = fs_info->fs_devices;
