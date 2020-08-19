@@ -1418,8 +1418,7 @@ struct ib_mr *mlx5_ib_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
 	mlx5_ib_dbg(dev, "mkey 0x%x\n", mr->mmkey.key);
 
 	mr->umem = umem;
-	mr->npages = npages;
-	atomic_add(mr->npages, &dev->mdev->priv.reg_pages);
+	atomic_add(ib_umem_num_pages(mr->umem), &dev->mdev->priv.reg_pages);
 	set_mr_fields(dev, mr, length, access_flags);
 
 	if (xlt_with_umr && !(access_flags & IB_ACCESS_ON_DEMAND)) {
@@ -1552,8 +1551,8 @@ int mlx5_ib_rereg_user_mr(struct ib_mr *ib_mr, int flags, u64 start,
 		 * used.
 		 */
 		flags |= IB_MR_REREG_TRANS;
-		atomic_sub(mr->npages, &dev->mdev->priv.reg_pages);
-		mr->npages = 0;
+		atomic_sub(ib_umem_num_pages(mr->umem),
+			   &dev->mdev->priv.reg_pages);
 		ib_umem_release(mr->umem);
 		mr->umem = NULL;
 
@@ -1561,8 +1560,8 @@ int mlx5_ib_rereg_user_mr(struct ib_mr *ib_mr, int flags, u64 start,
 				  &npages, &page_shift, &ncont, &order);
 		if (err)
 			goto err;
-		mr->npages = ncont;
-		atomic_add(mr->npages, &dev->mdev->priv.reg_pages);
+		atomic_add(ib_umem_num_pages(mr->umem),
+			   &dev->mdev->priv.reg_pages);
 	}
 
 	if (!mlx5_ib_can_reconfig_with_umr(dev, mr->access_flags,
@@ -1695,7 +1694,6 @@ static void clean_mr(struct mlx5_ib_dev *dev, struct mlx5_ib_mr *mr)
 
 static void dereg_mr(struct mlx5_ib_dev *dev, struct mlx5_ib_mr *mr)
 {
-	int npages = mr->npages;
 	struct ib_umem *umem = mr->umem;
 
 	/* Stop all DMA */
@@ -1709,9 +1707,10 @@ static void dereg_mr(struct mlx5_ib_dev *dev, struct mlx5_ib_mr *mr)
 	else
 		kfree(mr);
 
-	ib_umem_release(umem);
-	atomic_sub(npages, &dev->mdev->priv.reg_pages);
-
+	if (umem) {
+		atomic_sub(ib_umem_num_pages(umem), &dev->mdev->priv.reg_pages);
+		ib_umem_release(umem);
+	}
 }
 
 int mlx5_ib_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)
