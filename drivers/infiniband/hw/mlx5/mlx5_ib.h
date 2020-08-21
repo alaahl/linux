@@ -40,8 +40,6 @@
 #define MLX5_IB_DEFAULT_UIDX 0xffffff
 #define MLX5_USER_ASSIGNED_UIDX_MASK __mlx5_mask(qpc, user_index)
 
-#define MLX5_MKEY_PAGE_SHIFT_MASK __mlx5_mask(mkc, log_page_size)
-
 static __always_inline unsigned long
 __mlx5_log_page_size_to_bitmap(unsigned int log_pgsz_bits,
 			       unsigned int pgsz_shift)
@@ -68,6 +66,30 @@ __mlx5_log_page_size_to_bitmap(unsigned int log_pgsz_bits,
 				       __mlx5_bit_sz(typ, log_pgsz_fld),       \
 				       pgsz_shift),                            \
 			       iova)
+
+static __always_inline unsigned long
+__mlx5_page_offset_to_bitmask(unsigned int page_offset_bits,
+			      unsigned int offset_shift)
+{
+	unsigned int largest_offset_shift =
+		min_t(unsigned long, page_offset_bits - 1 + offset_shift,
+		      BITS_PER_LONG - 1);
+
+	return GENMASK(largest_offset_shift, offset_shift);
+}
+
+/*
+ * This computes a the page_size and non-quantized page_offset to fit within a
+ * prm structure.
+ */
+#define mlx5_umem_find_best_pgoff(umem, typ, log_pgsz_fld, pgsz_shift,         \
+				  page_offset_fld)                             \
+	ib_umem_find_best_pgoff(                                               \
+		umem,                                                          \
+		__mlx5_log_page_size_to_bitmap(                                \
+			__mlx5_bit_sz(typ, log_pgsz_fld), pgsz_shift),         \
+		__mlx5_page_offset_to_bitmask(                                 \
+			__mlx5_bit_sz(typ, page_offset_fld), 0))
 
 enum {
 	MLX5_IB_MMAP_OFFSET_START = 9,
