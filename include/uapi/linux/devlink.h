@@ -524,6 +524,11 @@ enum devlink_attr {
 	DEVLINK_ATTR_RELOAD_ACTIONS_PERFORMED,	/* u64 */
 	DEVLINK_ATTR_RELOAD_LIMIT,	/* u8 */
 
+	DEVLINK_ATTR_DEV_STATS,			/* nested */
+	DEVLINK_ATTR_RELOAD_STATS,	/* nested */
+	DEVLINK_ATTR_RELOAD_STATS_ENTRY,	/* nested */
+	DEVLINK_ATTR_RELOAD_STATS_VALUE,	/* u32 */
+
 	/* add new attributes above here, update the policy in devlink.c */
 
 	__DEVLINK_ATTR_MAX,
