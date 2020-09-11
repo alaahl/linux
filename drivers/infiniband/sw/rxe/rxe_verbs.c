@@ -1182,7 +1182,7 @@ int rxe_register_device(struct rxe_dev *rxe, const char *ibdev_name)
 	rxe->tfm = tfm;
 
 	rdma_set_device_sysfs_group(dev, &rxe_attr_group);
-	err = ib_register_device(dev, ibdev_name);
+	err = ib_register_device(dev, ibdev_name, NULL);
 	if (err)
 		pr_warn("%s failed with error %d\n", __func__, err);
 
