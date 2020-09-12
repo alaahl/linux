@@ -86,6 +86,7 @@ mlx5_devlink_info_get(struct devlink *devlink, struct devlink_info_req *req,
 
 static int mlx5_devlink_reload_down(struct devlink *devlink, bool netns_change,
 				    enum devlink_reload_action action,
+				    enum devlink_reload_limit limit,
 				    struct netlink_ext_ack *extack)
 {
 	struct mlx5_core_dev *dev = devlink_priv(devlink);
@@ -95,6 +96,7 @@ static int mlx5_devlink_reload_down(struct devlink *devlink, bool netns_change,
 }
 
 static int mlx5_devlink_reload_up(struct devlink *devlink, enum devlink_reload_action action,
+				  enum devlink_reload_limit limit,
 				  struct netlink_ext_ack *extack, unsigned long *actions_performed)
 {
 	struct mlx5_core_dev *dev = devlink_priv(devlink);
