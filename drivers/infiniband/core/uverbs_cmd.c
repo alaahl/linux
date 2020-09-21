@@ -680,8 +680,7 @@ int ib_uverbs_dealloc_xrcd(struct ib_uobject *uobject, struct ib_xrcd *xrcd,
 		return 0;
 
 	ret = ib_dealloc_xrcd_user(xrcd, &attrs->driver_udata);
-
-	if (ib_is_destroy_retryable(ret, why, uobject)) {
+	if (ret) {
 		atomic_inc(&xrcd->usecnt);
 		return ret;
 	}
@@ -689,7 +688,7 @@ int ib_uverbs_dealloc_xrcd(struct ib_uobject *uobject, struct ib_xrcd *xrcd,
 	if (inode)
 		xrcd_table_delete(dev, inode);
 
-	return ret;
+	return 0;
 }
 
 static int ib_uverbs_reg_mr(struct uverbs_attr_bundle *attrs)

@@ -137,15 +137,9 @@ static int uverbs_destroy_uobject(struct ib_uobject *uobj,
 	} else if (uobj->object) {
 		ret = uobj->uapi_object->type_class->destroy_hw(uobj, reason,
 								attrs);
-		if (ret) {
-			if (ib_is_destroy_retryable(ret, reason, uobj))
-				return ret;
-
-			/* Nothing to be done, dangle the memory and move on */
-			WARN(true,
-			     "ib_uverbs: failed to remove uobject id %d, driver err=%d",
-			     uobj->id, ret);
-		}
+		if (ret)
+			/* Nothing to be done, wait till ucontext will clean it */
+			return ret;
 
 		uobj->object = NULL;
 	}
@@ -543,16 +537,8 @@ static int __must_check destroy_hw_idr_uobject(struct ib_uobject *uobj,
 			     struct uverbs_obj_idr_type, type);
 	int ret = idr_type->destroy_object(uobj, why, attrs);
 
-	/*
-	 * We can only fail gracefully if the user requested to destroy the
-	 * object or when a retry may be called upon an error.
-	 * In the rest of the cases, just remove whatever you can.
-	 */
-	if (ib_is_destroy_retryable(ret, why, uobj))
+	if (ret)
 		return ret;
-
-	if (why == RDMA_REMOVE_ABORT)
-		return 0;
 
 	ib_rdmacg_uncharge(&uobj->cg_obj, uobj->context->device,
 			   RDMACG_RESOURCE_HCA_OBJECT);
@@ -581,12 +567,8 @@ static int __must_check destroy_hw_fd_uobject(struct ib_uobject *uobj,
 {
 	const struct uverbs_obj_fd_type *fd_type = container_of(
 		uobj->uapi_object->type_attrs, struct uverbs_obj_fd_type, type);
-	int ret = fd_type->destroy_object(uobj, why);
 
-	if (ib_is_destroy_retryable(ret, why, uobj))
-		return ret;
-
-	return 0;
+	return fd_type->destroy_object(uobj, why);
 }
 
 static void remove_handle_fd_uobject(struct ib_uobject *uobj)
@@ -879,6 +861,9 @@ static int __uverbs_cleanup_ufile(struct ib_uverbs_file *ufile,
 void uverbs_destroy_ufile_hw(struct ib_uverbs_file *ufile,
 			     enum rdma_remove_reason reason)
 {
+	struct ib_uobject *obj, *next_obj;
+	unsigned long flags;
+
 	down_write(&ufile->hw_destroy_rwsem);
 
 	/*
@@ -888,7 +873,6 @@ void uverbs_destroy_ufile_hw(struct ib_uverbs_file *ufile,
 	if (!ufile->ucontext)
 		goto done;
 
-	ufile->ucontext->cleanup_retryable = true;
 	while (!list_empty(&ufile->uobjects))
 		if (__uverbs_cleanup_ufile(ufile, reason)) {
 			/*
@@ -899,10 +883,16 @@ void uverbs_destroy_ufile_hw(struct ib_uverbs_file *ufile,
 			break;
 		}
 
-	ufile->ucontext->cleanup_retryable = false;
-	if (!list_empty(&ufile->uobjects))
-		__uverbs_cleanup_ufile(ufile, reason);
-
+	list_for_each_entry_safe (obj, next_obj, &ufile->uobjects, list) {
+		spin_lock_irqsave(&ufile->uobjects_lock, flags);
+		list_del_init(&obj->list);
+		spin_unlock_irqrestore(&ufile->uobjects_lock, flags);
+		/*
+		 * Pairs with the get in rdma_alloc_commit_uobject(), could
+		 * destroy uobj.
+		 */
+		uverbs_uobject_put(obj);
+	}
 	ufile_destroy_ucontext(ufile, reason);
 
 done:
