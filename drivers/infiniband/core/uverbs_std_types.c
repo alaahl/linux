@@ -40,7 +40,6 @@
 #include "uverbs.h"
 
 static int uverbs_free_ah(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	return rdma_destroy_ah_user((struct ib_ah *)uobject->object,
@@ -49,7 +48,6 @@ static int uverbs_free_ah(struct ib_uobject *uobject,
 }
 
 static int uverbs_free_flow(struct ib_uobject *uobject,
-			    enum rdma_remove_reason why,
 			    struct uverbs_attr_bundle *attrs)
 {
 	struct ib_flow *flow = (struct ib_flow *)uobject->object;
@@ -59,24 +57,22 @@ static int uverbs_free_flow(struct ib_uobject *uobject,
 	int ret;
 
 	ret = flow->device->ops.destroy_flow(flow);
-	if (!ret) {
-		if (qp)
-			atomic_dec(&qp->usecnt);
-		ib_uverbs_flow_resources_free(uflow->resources);
-	}
+	if (ret)
+		return ret;
 
-	return ret;
+	if (qp)
+		atomic_dec(&qp->usecnt);
+	ib_uverbs_flow_resources_free(uflow->resources);
+	return 0;
 }
 
 static int uverbs_free_mw(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	return uverbs_dealloc_mw((struct ib_mw *)uobject->object);
 }
 
 static int uverbs_free_rwq_ind_tbl(struct ib_uobject *uobject,
-				   enum rdma_remove_reason why,
 				   struct uverbs_attr_bundle *attrs)
 {
 	struct ib_rwq_ind_table *rwq_ind_tbl = uobject->object;
@@ -100,7 +96,6 @@ static int uverbs_free_rwq_ind_tbl(struct ib_uobject *uobject,
 }
 
 static int uverbs_free_xrcd(struct ib_uobject *uobject,
-			    enum rdma_remove_reason why,
 			    struct uverbs_attr_bundle *attrs)
 {
 	struct ib_xrcd *xrcd = uobject->object;
@@ -112,14 +107,13 @@ static int uverbs_free_xrcd(struct ib_uobject *uobject,
 		return -EBUSY;
 
 	mutex_lock(&attrs->ufile->device->xrcd_tree_mutex);
-	ret = ib_uverbs_dealloc_xrcd(uobject, xrcd, why, attrs);
+	ret = ib_uverbs_dealloc_xrcd(uobject, xrcd, attrs);
 	mutex_unlock(&attrs->ufile->device->xrcd_tree_mutex);
 
 	return ret;
 }
 
 static int uverbs_free_pd(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	struct ib_pd *pd = uobject->object;

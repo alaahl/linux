@@ -36,7 +36,6 @@
 #include "restrack.h"
 
 static int uverbs_free_mr(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	return ib_dereg_mr_user((struct ib_mr *)uobject->object,

@@ -9,12 +9,12 @@
 #include "core_priv.h"
 
 static int uverbs_free_qp(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	struct ib_qp *qp = uobject->object;
 	struct ib_uqp_object *uqp =
 		container_of(uobject, struct ib_uqp_object, uevent.uobject);
+	struct ib_udata *udata = &attrs->driver_udata;
 	int ret;
 
 	/*
@@ -24,14 +24,14 @@ static int uverbs_free_qp(struct ib_uobject *uobject,
 	 * because the mcast attaches are not ubojects and will not be
 	 * destroyed by anything else during cleanup processing.
 	 */
-	if (why == RDMA_REMOVE_DESTROY) {
+	if (udata) {
 		if (!list_empty(&uqp->mcast_list))
 			return -EBUSY;
 	} else if (qp == qp->real_qp) {
 		ib_uverbs_detach_umcast(qp, uqp);
 	}
 
-	ret = ib_destroy_qp_user(qp, &attrs->driver_udata);
+	ret = ib_destroy_qp_user(qp, udata);
 	if (ret)
 		return ret;
 

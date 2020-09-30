@@ -83,7 +83,6 @@ err:
 }
 
 static int pp_obj_cleanup(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	struct mlx5_ib_pp *pp_entry = uobject->object;

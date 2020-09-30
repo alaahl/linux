@@ -36,7 +36,6 @@
 #include <rdma/uverbs_std_types.h>
 
 static int uverbs_free_counters(struct ib_uobject *uobject,
-				enum rdma_remove_reason why,
 				struct uverbs_attr_bundle *attrs)
 {
 	struct ib_counters *counters = uobject->object;

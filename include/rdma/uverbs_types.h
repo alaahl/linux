@@ -99,7 +99,6 @@ struct uverbs_obj_idr_type {
 	 * completely unchanged.
 	 */
 	int __must_check (*destroy_object)(struct ib_uobject *uobj,
-					   enum rdma_remove_reason why,
 					   struct uverbs_attr_bundle *attrs);
 };
 

@@ -1279,7 +1279,6 @@ static void devx_cleanup_subscription(struct mlx5_ib_dev *dev,
 }
 
 static int devx_obj_cleanup(struct ib_uobject *uobject,
-			    enum rdma_remove_reason why,
 			    struct uverbs_attr_bundle *attrs)
 {
 	u32 out[MLX5_ST_SZ_DW(general_obj_out_cmd_hdr)];
@@ -2167,7 +2166,6 @@ err_obj_free:
 }
 
 static int devx_umem_cleanup(struct ib_uobject *uobject,
-			     enum rdma_remove_reason why,
 			     struct uverbs_attr_bundle *attrs)
 {
 	struct devx_umem *obj = uobject->object;

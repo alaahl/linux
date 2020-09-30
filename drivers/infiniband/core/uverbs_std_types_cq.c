@@ -36,7 +36,6 @@
 #include "restrack.h"
 
 static int uverbs_free_cq(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	struct ib_cq *cq = uobject->object;

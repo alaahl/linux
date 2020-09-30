@@ -3625,7 +3625,6 @@ static void mlx5_ib_cleanup_multiport_master(struct mlx5_ib_dev *dev)
 }
 
 static int mmap_obj_cleanup(struct ib_uobject *uobject,
-			    enum rdma_remove_reason why,
 			    struct uverbs_attr_bundle *attrs)
 {
 	struct mlx5_user_mmap_entry *obj = uobject->object;

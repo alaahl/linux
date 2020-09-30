@@ -535,7 +535,7 @@ static int __must_check destroy_hw_idr_uobject(struct ib_uobject *uobj,
 	const struct uverbs_obj_idr_type *idr_type =
 		container_of(uobj->uapi_object->type_attrs,
 			     struct uverbs_obj_idr_type, type);
-	int ret = idr_type->destroy_object(uobj, why, attrs);
+	int ret = idr_type->destroy_object(uobj, attrs);
 
 	if (ret)
 		return ret;

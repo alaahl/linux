@@ -668,7 +668,6 @@ static int ib_uverbs_close_xrcd(struct uverbs_attr_bundle *attrs)
 }
 
 int ib_uverbs_dealloc_xrcd(struct ib_uobject *uobject, struct ib_xrcd *xrcd,
-			   enum rdma_remove_reason why,
 			   struct uverbs_attr_bundle *attrs)
 {
 	struct inode *inode;
