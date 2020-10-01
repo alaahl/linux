@@ -420,7 +420,8 @@ struct mlx5_ifc_flow_table_prop_layout_bits {
 	u8         reserved_at_1a[0x2];
 	u8         ipsec_encrypt[0x1];
 	u8         ipsec_decrypt[0x1];
-	u8         reserved_at_1e[0x2];
+	u8         sw_owner_v2[0x1];
+	u8         reserved_at_1f[0x1];
 
 	u8         termination_table_raw_traffic[0x1];
 	u8         reserved_at_21[0x1];
@@ -1614,6 +1615,7 @@ enum mlx5_flow_destination_type {
 	MLX5_FLOW_DESTINATION_TYPE_VPORT        = 0x0,
 	MLX5_FLOW_DESTINATION_TYPE_FLOW_TABLE   = 0x1,
 	MLX5_FLOW_DESTINATION_TYPE_TIR          = 0x2,
+	MLX5_FLOW_DESTINATION_TYPE_FLOW_SAMPLER = 0x6,
 
 	MLX5_FLOW_DESTINATION_TYPE_PORT         = 0x99,
 	MLX5_FLOW_DESTINATION_TYPE_COUNTER      = 0x100,
@@ -10655,11 +10657,13 @@ struct mlx5_ifc_affiliated_event_header_bits {
 enum {
 	MLX5_HCA_CAP_GENERAL_OBJECT_TYPES_ENCRYPTION_KEY = BIT(0xc),
 	MLX5_HCA_CAP_GENERAL_OBJECT_TYPES_IPSEC = BIT(0x13),
+	MLX5_HCA_CAP_GENERAL_OBJECT_TYPES_SAMPLER = BIT(0x20),
 };
 
 enum {
 	MLX5_GENERAL_OBJECT_TYPES_ENCRYPTION_KEY = 0xc,
 	MLX5_GENERAL_OBJECT_TYPES_IPSEC = 0x13,
+	MLX5_GENERAL_OBJECT_TYPES_SAMPLER = 0x20,
 };
 
 enum {
@@ -10732,6 +10736,33 @@ struct mlx5_ifc_encryption_key_obj_bits {
 struct mlx5_ifc_create_encryption_key_in_bits {
 	struct mlx5_ifc_general_obj_in_cmd_hdr_bits general_obj_in_cmd_hdr;
 	struct mlx5_ifc_encryption_key_obj_bits encryption_key_object;
+};
+
+struct mlx5_ifc_sampler_obj_bits {
+	u8         modify_field_select[0x40];
+
+	u8         table_type[0x8];
+	u8         level[0x8];
+	u8         reserved_at_50[0xf];
+	u8         ignore_flow_level[0x1];
+
+	u8         sample_ratio[0x20];
+
+	u8         reserved_at_80[0x8];
+	u8         sample_table_id[0x18];
+
+	u8         reserved_at_a0[0x8];
+	u8         default_table_id[0x18];
+
+	u8         sw_steering_icm_address_rx[0x40];
+	u8         sw_steering_icm_address_tx[0x40];
+
+	u8         reserved_at_140[0xa0];
+};
+
+struct mlx5_ifc_create_sampler_obj_in_bits {
+	struct mlx5_ifc_general_obj_in_cmd_hdr_bits general_obj_in_cmd_hdr;
+	struct mlx5_ifc_sampler_obj_bits sampler_object;
 };
 
 enum {
