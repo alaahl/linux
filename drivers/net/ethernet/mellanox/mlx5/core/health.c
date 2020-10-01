@@ -190,6 +190,11 @@ static bool reset_fw_if_needed(struct mlx5_core_dev *dev)
 	return true;
 }
 
+static bool mlx5_is_device_initialized(struct mlx5_core_dev *dev)
+{
+	return test_bit(MLX5_INTERFACE_STATE_INITIALIZED, &dev->intf_state);
+}
+
 void mlx5_enter_error_state(struct mlx5_core_dev *dev, bool force)
 {
 	bool err_detected = false;
@@ -201,6 +206,9 @@ void mlx5_enter_error_state(struct mlx5_core_dev *dev, bool force)
 		err_detected = true;
 	}
 	mutex_lock(&dev->intf_state_mutex);
+	if (!mlx5_is_device_initialized(dev))
+		return;
+
 	if (!err_detected && dev->state == MLX5_DEVICE_STATE_INTERNAL_ERROR)
 		goto unlock;/* a previous error is still being handled */
 	if (dev->state == MLX5_DEVICE_STATE_UNINITIALIZED) {
@@ -609,6 +617,9 @@ static void mlx5_fw_fatal_reporter_err_work(struct work_struct *work)
 	dev = container_of(priv, struct mlx5_core_dev, priv);
 
 	mlx5_enter_error_state(dev, false);
+	if (!mlx5_is_device_initialized(dev))
+		return;
+
 	if (IS_ERR_OR_NULL(health->fw_fatal_reporter)) {
 		if (mlx5_health_try_recover(dev))
 			mlx5_core_err(dev, "health recovery failed\n");
