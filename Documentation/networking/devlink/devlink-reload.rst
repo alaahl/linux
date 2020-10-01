@@ -1,0 +1,80 @@
+.. SPDX-License-Identifier: GPL-2.0
+
+==============
+Devlink Reload
+==============
+
+``devlink-reload`` provides mechanism to either reinit driver entities,
+applying ``devlink-params`` and ``devlink-resources`` new values or firmware
+activation depends on reload action selected.
+
+Reload actions
+==============
+
+User may select a reload action.
+By default ``driver_reinit`` action is selected.
+
+.. list-table:: Possible reload actions
+   :widths: 5 90
+
+   * - Name
+     - Description
+   * - ``driver-reinit``
+     - Devlink driver entities re-initialization, including applying
+       new values to devlink entities which are used during driver
+       load such as ``devlink-params`` in configuration mode
+       ``driverinit`` or ``devlink-resources``
+   * - ``fw_activate``
+     - Firmware activate. Activates new firmware if such image is stored and
+       pending activation. This action involves firmware reset, if no new image
+       pending this action will reload current firmware image.
+
+Note that even though user asks for a specific action, the driver
+implementation might require to perform another action alongside with
+it. For example, some driver do not support driver reinitialization
+being performed without fw activation. Therefore, the devlink reload
+command return the list of actions which were actrually performed.
+
+Reload limits
+=============
+
+By default reload actions are not limited and driver implementation may
+include reset or downtime as needed to perform the actions.
+
+However, some drivers support action limits, which limit the action
+implementation to specific constrains.
+
+.. list-table:: Possible reload limits
+   :widths: 5 90
+
+   * - Name
+     - Description
+   * - ``no_reset``
+     - No reset allowed, no down time allowed, no link flap and no
+       configuration is lost.
+
+Change namespace
+================
+
+The netns option allow user to be able to move devlink instances into
+namespaces during devlink reload operation.
+By default all devlink instances are created in init_net and stay there.
+
+example usage
+-------------
+
+.. code:: shell
+
+    $ devlink dev reload help
+    $ devlink dev reload DEV [ netns { PID | NAME | ID } ] [ action { driver_reinit | fw_activate } ] [ limit no_reset ]
+
+    # Run reload command for devlink driver entities re-initialization:
+    $ devlink dev reload pci/0000:82:00.0 action driver_reinit
+    reload_actions_performed:
+      driver_reinit
+
+    # Run reload command to activate firmware:
+    # Note that mlx5 driver reloads the driver while activating firmware
+    $ devlink dev reload pci/0000:82:00.0 action fw_activate
+    reload_actions_performed:
+      driver_reinit fw_activate

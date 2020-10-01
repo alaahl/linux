@@ -462,10 +462,113 @@ static int devlink_nl_put_handle(struct sk_buff *msg, struct devlink *devlink)
 	return 0;
 }
 
+struct devlink_reload_combination {
+	enum devlink_reload_action action;
+	enum devlink_reload_limit limit;
+};
+
+static const struct devlink_reload_combination devlink_reload_invalid_combinations[] = {
+	{
+		/* can't reinitialize driver with no down time */
+		.action = DEVLINK_RELOAD_ACTION_DRIVER_REINIT,
+		.limit = DEVLINK_RELOAD_LIMIT_NO_RESET,
+	},
+};
+
+static bool
+devlink_reload_combination_is_invalid(enum devlink_reload_action action,
+				      enum devlink_reload_limit limit)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(devlink_reload_invalid_combinations); i++)
+		if (devlink_reload_invalid_combinations[i].action == action &&
+		    devlink_reload_invalid_combinations[i].limit == limit)
+			return true;
+	return false;
+}
+
+static bool
+devlink_reload_action_is_supported(struct devlink *devlink, enum devlink_reload_action action)
+{
+	return test_bit(action, &devlink->ops->reload_actions);
+}
+
+static bool
+devlink_reload_limit_is_supported(struct devlink *devlink, enum devlink_reload_limit limit)
+{
+	return test_bit(limit, &devlink->ops->reload_limits);
+}
+
+static int devlink_reload_stat_put(struct sk_buff *msg, enum devlink_reload_action action,
+				   enum devlink_reload_limit limit, u32 value)
+{
+	struct nlattr *reload_stats_entry;
+
+	reload_stats_entry = nla_nest_start(msg, DEVLINK_ATTR_RELOAD_STATS_ENTRY);
+	if (!reload_stats_entry)
+		return -EMSGSIZE;
+
+	if (nla_put_u8(msg, DEVLINK_ATTR_RELOAD_ACTION, action))
+		goto nla_put_failure;
+	if (nla_put_u8(msg, DEVLINK_ATTR_RELOAD_LIMIT, limit))
+		goto nla_put_failure;
+	if (nla_put_u32(msg, DEVLINK_ATTR_RELOAD_STATS_VALUE, value))
+		goto nla_put_failure;
+	nla_nest_end(msg, reload_stats_entry);
+	return 0;
+
+nla_put_failure:
+	nla_nest_cancel(msg, reload_stats_entry);
+	return -EMSGSIZE;
+}
+
+static int devlink_reload_stats_put(struct sk_buff *msg, struct devlink *devlink, bool is_remote)
+{
+	struct nlattr *reload_stats_attr;
+	int i, j, stat_idx;
+	u32 value;
+
+	if (!is_remote)
+		reload_stats_attr = nla_nest_start(msg, DEVLINK_ATTR_RELOAD_STATS);
+	else
+		reload_stats_attr = nla_nest_start(msg, DEVLINK_ATTR_REMOTE_RELOAD_STATS);
+
+	if (!reload_stats_attr)
+		return -EMSGSIZE;
+
+	for (j = 0; j <= DEVLINK_RELOAD_LIMIT_MAX; j++) {
+		if (!is_remote && j != DEVLINK_RELOAD_LIMIT_UNSPEC &&
+		    !devlink_reload_limit_is_supported(devlink, j))
+			continue;
+		for (i = 0; i <= DEVLINK_RELOAD_ACTION_MAX; i++) {
+			if ((!is_remote && !devlink_reload_action_is_supported(devlink, i)) ||
+			    i == DEVLINK_RELOAD_ACTION_UNSPEC ||
+			    devlink_reload_combination_is_invalid(i, j))
+				continue;
+
+			stat_idx = j * __DEVLINK_RELOAD_ACTION_MAX + i;
+			if (!is_remote)
+				value = devlink->reload_stats[stat_idx];
+			else
+				value = devlink->remote_reload_stats[stat_idx];
+			if (devlink_reload_stat_put(msg, i, j, value))
+				goto nla_put_failure;
+		}
+	}
+	nla_nest_end(msg, reload_stats_attr);
+	return 0;
+
+nla_put_failure:
+	nla_nest_cancel(msg, reload_stats_attr);
+	return -EMSGSIZE;
+}
+
 static int devlink_nl_fill(struct sk_buff *msg, struct devlink *devlink,
 			   enum devlink_command cmd, u32 portid,
 			   u32 seq, int flags)
 {
+	struct nlattr *dev_stats;
 	void *hdr;
 
 	hdr = genlmsg_put(msg, portid, seq, &devlink_nl_family, flags, cmd);
@@ -477,9 +580,21 @@ static int devlink_nl_fill(struct sk_buff *msg, struct devlink *devlink,
 	if (nla_put_u8(msg, DEVLINK_ATTR_RELOAD_FAILED, devlink->reload_failed))
 		goto nla_put_failure;
 
+	dev_stats = nla_nest_start(msg, DEVLINK_ATTR_DEV_STATS);
+	if (!dev_stats)
+		goto nla_put_failure;
+
+	if (devlink_reload_stats_put(msg, devlink, false))
+		goto dev_stats_nest_cancel;
+	if (devlink_reload_stats_put(msg, devlink, true))
+		goto dev_stats_nest_cancel;
+
+	nla_nest_end(msg, dev_stats);
 	genlmsg_end(msg, hdr);
 	return 0;
 
+dev_stats_nest_cancel:
+	nla_nest_cancel(msg, dev_stats);
 nla_put_failure:
 	genlmsg_cancel(msg, hdr);
 	return -EMSGSIZE;
@@ -2946,9 +3061,9 @@ static void devlink_reload_netns_change(struct devlink *devlink,
 				     DEVLINK_CMD_PARAM_NEW);
 }
 
-static bool devlink_reload_supported(const struct devlink *devlink)
+static bool devlink_reload_supported(const struct devlink_ops *ops)
 {
-	return devlink->ops->reload_down && devlink->ops->reload_up;
+	return ops->reload_down && ops->reload_up;
 }
 
 static void devlink_reload_failed_set(struct devlink *devlink,
@@ -2966,33 +3081,131 @@ bool devlink_is_reload_failed(const struct devlink *devlink)
 }
 EXPORT_SYMBOL_GPL(devlink_is_reload_failed);
 
-static int devlink_reload(struct devlink *devlink, struct net *dest_net,
-			  struct netlink_ext_ack *extack)
+static void
+__devlink_reload_stats_update(struct devlink *devlink, u32 *reload_stats,
+			      enum devlink_reload_limit limit, unsigned long actions_performed)
 {
+	int stat_idx;
+	int action;
+
+	if (!actions_performed)
+		return;
+
+	if (WARN_ON(limit > DEVLINK_RELOAD_LIMIT_MAX))
+		return;
+	for (action = 0; action <= DEVLINK_RELOAD_ACTION_MAX; action++) {
+		if (!test_bit(action, &actions_performed))
+			continue;
+		stat_idx = limit * __DEVLINK_RELOAD_ACTION_MAX + action;
+		reload_stats[stat_idx]++;
+	}
+	devlink_notify(devlink, DEVLINK_CMD_NEW);
+}
+
+static void
+devlink_reload_stats_update(struct devlink *devlink, enum devlink_reload_limit limit,
+			    unsigned long actions_performed)
+{
+	__devlink_reload_stats_update(devlink, devlink->reload_stats, limit, actions_performed);
+}
+
+/**
+ *	devlink_remote_reload_actions_performed - Update devlink on reload actions
+ *	  performed which are not a direct result of devlink reload call.
+ *
+ *	This should be called by a driver after performing reload actions in case it was not
+ *	a result of devlink reload call. For example fw_activate was performed as a result
+ *	of devlink reload triggered fw_activate on another host.
+ *	The motivation for this function is to keep data on reload actions performed on this
+ *	function whether it was done due to direct devlink reload call or not.
+ *
+ *	@devlink: devlink
+ *	@limit: reload limit
+ *	@actions_performed: bitmask of actions performed
+ */
+void devlink_remote_reload_actions_performed(struct devlink *devlink,
+					     enum devlink_reload_limit limit,
+					     unsigned long actions_performed)
+{
+	__devlink_reload_stats_update(devlink, devlink->remote_reload_stats, limit,
+				      actions_performed);
+}
+EXPORT_SYMBOL_GPL(devlink_remote_reload_actions_performed);
+
+static int devlink_reload(struct devlink *devlink, struct net *dest_net,
+			  enum devlink_reload_action action, enum devlink_reload_limit limit,
+			  struct netlink_ext_ack *extack, unsigned long *actions_performed)
+{
+	u32 remote_reload_stats[DEVLINK_RELOAD_STATS_ARRAY_SIZE];
 	int err;
 
 	if (!devlink->reload_enabled)
 		return -EOPNOTSUPP;
 
-	err = devlink->ops->reload_down(devlink, !!dest_net, extack);
+	memcpy(remote_reload_stats, devlink->remote_reload_stats, sizeof(remote_reload_stats));
+	err = devlink->ops->reload_down(devlink, !!dest_net, action, limit, extack);
 	if (err)
 		return err;
 
 	if (dest_net && !net_eq(dest_net, devlink_net(devlink)))
 		devlink_reload_netns_change(devlink, dest_net);
 
-	err = devlink->ops->reload_up(devlink, extack);
+	err = devlink->ops->reload_up(devlink, action, limit, extack, actions_performed);
 	devlink_reload_failed_set(devlink, !!err);
-	return err;
+	if (err)
+		return err;
+
+	WARN_ON(!test_bit(action, actions_performed));
+	/* Catch driver on updating the remote action within devlink reload */
+	WARN_ON(memcmp(remote_reload_stats, devlink->remote_reload_stats,
+		       sizeof(remote_reload_stats)));
+	devlink_reload_stats_update(devlink, limit, *actions_performed);
+	return 0;
+}
+
+static int
+devlink_nl_reload_actions_performed_snd(struct devlink *devlink,
+					unsigned long actions_performed,
+					enum devlink_command cmd, struct genl_info *info)
+{
+	struct sk_buff *msg;
+	void *hdr;
+
+	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
+
+	hdr = genlmsg_put(msg, info->snd_portid, info->snd_seq, &devlink_nl_family, 0, cmd);
+	if (!hdr)
+		goto free_msg;
+
+	if (devlink_nl_put_handle(msg, devlink))
+		goto nla_put_failure;
+
+	if (nla_put_u64_64bit(msg, DEVLINK_ATTR_RELOAD_ACTIONS_PERFORMED, actions_performed,
+			      DEVLINK_ATTR_PAD))
+		goto nla_put_failure;
+	genlmsg_end(msg, hdr);
+
+	return genlmsg_reply(msg, info);
+
+nla_put_failure:
+	genlmsg_cancel(msg, hdr);
+free_msg:
+	nlmsg_free(msg);
+	return -EMSGSIZE;
 }
 
 static int devlink_nl_cmd_reload(struct sk_buff *skb, struct genl_info *info)
 {
+	enum devlink_reload_limit limit;
 	struct devlink *devlink = info->user_ptr[0];
+	enum devlink_reload_action action;
+	unsigned long actions_performed;
 	struct net *dest_net = NULL;
 	int err;
 
-	if (!devlink_reload_supported(devlink))
+	if (!devlink_reload_supported(devlink->ops))
 		return -EOPNOTSUPP;
 
 	err = devlink_resources_validate(devlink, NULL, info);
@@ -3009,12 +3222,44 @@ static int devlink_nl_cmd_reload(struct sk_buff *skb, struct genl_info *info)
 			return PTR_ERR(dest_net);
 	}
 
-	err = devlink_reload(devlink, dest_net, info->extack);
+	if (info->attrs[DEVLINK_ATTR_RELOAD_ACTION])
+		action = nla_get_u8(info->attrs[DEVLINK_ATTR_RELOAD_ACTION]);
+	else
+		action = DEVLINK_RELOAD_ACTION_DRIVER_REINIT;
+
+	if (!devlink_reload_action_is_supported(devlink, action)) {
+		NL_SET_ERR_MSG_MOD(info->extack,
+				   "Requested reload action is not supported by the driver");
+		return -EOPNOTSUPP;
+	}
+
+	limit = DEVLINK_RELOAD_LIMIT_UNSPEC;
+	if (info->attrs[DEVLINK_ATTR_RELOAD_LIMIT]) {
+		limit = nla_get_u8(info->attrs[DEVLINK_ATTR_RELOAD_LIMIT]);
+		if (!devlink_reload_limit_is_supported(devlink, limit)) {
+			NL_SET_ERR_MSG_MOD(info->extack,
+					   "Requested limit is not supported by the driver");
+			return -EOPNOTSUPP;
+		}
+		if (devlink_reload_combination_is_invalid(action, limit)) {
+			NL_SET_ERR_MSG_MOD(info->extack,
+					   "Requested limit is invalid for this action");
+			return -EINVAL;
+		}
+	}
+	err = devlink_reload(devlink, dest_net, action, limit, info->extack, &actions_performed);
 
 	if (dest_net)
 		put_net(dest_net);
 
-	return err;
+	if (err)
+		return err;
+	/* For backward compatibility generate reply only if attributes used by user */
+	if (!info->attrs[DEVLINK_ATTR_RELOAD_ACTION] && !info->attrs[DEVLINK_ATTR_RELOAD_LIMIT])
+		return 0;
+
+	return devlink_nl_reload_actions_performed_snd(devlink, actions_performed,
+						       DEVLINK_CMD_RELOAD, info);
 }
 
 static int devlink_nl_flash_update_fill(struct sk_buff *msg,
@@ -3238,6 +3483,11 @@ static const struct devlink_param devlink_param_generic[] = {
 		.id = DEVLINK_PARAM_GENERIC_ID_ENABLE_ROCE,
 		.name = DEVLINK_PARAM_GENERIC_ENABLE_ROCE_NAME,
 		.type = DEVLINK_PARAM_GENERIC_ENABLE_ROCE_TYPE,
+	},
+	{
+		.id = DEVLINK_PARAM_GENERIC_ID_ENABLE_REMOTE_DEV_RESET,
+		.name = DEVLINK_PARAM_GENERIC_ENABLE_REMOTE_DEV_RESET_NAME,
+		.type = DEVLINK_PARAM_GENERIC_ENABLE_REMOTE_DEV_RESET_TYPE,
 	},
 };
 
@@ -7119,6 +7369,10 @@ static const struct nla_policy devlink_nl_policy[DEVLINK_ATTR_MAX + 1] = {
 	[DEVLINK_ATTR_TRAP_POLICER_RATE] = { .type = NLA_U64 },
 	[DEVLINK_ATTR_TRAP_POLICER_BURST] = { .type = NLA_U64 },
 	[DEVLINK_ATTR_PORT_FUNCTION] = { .type = NLA_NESTED },
+	[DEVLINK_ATTR_RELOAD_ACTION] = NLA_POLICY_RANGE(NLA_U8, DEVLINK_RELOAD_ACTION_DRIVER_REINIT,
+							DEVLINK_RELOAD_ACTION_MAX),
+	[DEVLINK_ATTR_RELOAD_LIMIT] = NLA_POLICY_RANGE(NLA_U8, DEVLINK_RELOAD_LIMIT_NO_RESET,
+						       DEVLINK_RELOAD_LIMIT_MAX),
 };
 
 static const struct genl_ops devlink_nl_ops[] = {
@@ -7452,6 +7706,35 @@ static struct genl_family devlink_nl_family __ro_after_init = {
 	.n_mcgrps	= ARRAY_SIZE(devlink_nl_mcgrps),
 };
 
+static bool devlink_reload_actions_valid(const struct devlink_ops *ops)
+{
+	const struct devlink_reload_combination *comb;
+	int i;
+
+	if (!devlink_reload_supported(ops)) {
+		if (WARN_ON(ops->reload_actions))
+			return false;
+		return true;
+	}
+
+	if (WARN_ON(!ops->reload_actions ||
+		    ops->reload_actions & BIT(DEVLINK_RELOAD_ACTION_UNSPEC) ||
+		    ops->reload_actions >= BIT(__DEVLINK_RELOAD_ACTION_MAX)))
+		return false;
+
+	if (WARN_ON(ops->reload_limits & BIT(DEVLINK_RELOAD_LIMIT_UNSPEC) ||
+		    ops->reload_limits >= BIT(__DEVLINK_RELOAD_LIMIT_MAX)))
+		return false;
+
+	for (i = 0; i < ARRAY_SIZE(devlink_reload_invalid_combinations); i++)  {
+		comb = &devlink_reload_invalid_combinations[i];
+		if (ops->reload_actions == BIT(comb->action) &&
+		    ops->reload_limits == BIT(comb->limit))
+			return false;
+	}
+	return true;
+}
+
 /**
  *	devlink_alloc - Allocate new devlink instance resources
  *
@@ -7466,6 +7749,9 @@ struct devlink *devlink_alloc(const struct devlink_ops *ops, size_t priv_size)
 	struct devlink *devlink;
 
 	if (WARN_ON(!ops))
+		return NULL;
+
+	if (!devlink_reload_actions_valid(ops))
 		return NULL;
 
 	devlink = kzalloc(sizeof(*devlink) + priv_size, GFP_KERNEL);
@@ -7516,7 +7802,7 @@ EXPORT_SYMBOL_GPL(devlink_register);
 void devlink_unregister(struct devlink *devlink)
 {
 	mutex_lock(&devlink_mutex);
-	WARN_ON(devlink_reload_supported(devlink) &&
+	WARN_ON(devlink_reload_supported(devlink->ops) &&
 		devlink->reload_enabled);
 	devlink_notify(devlink, DEVLINK_CMD_DEL);
 	list_del(&devlink->list);
@@ -8553,7 +8839,7 @@ __devlink_param_driverinit_value_set(struct devlink *devlink,
 int devlink_param_driverinit_value_get(struct devlink *devlink, u32 param_id,
 				       union devlink_param_value *init_val)
 {
-	if (!devlink_reload_supported(devlink))
+	if (!devlink_reload_supported(devlink->ops))
 		return -EOPNOTSUPP;
 
 	return __devlink_param_driverinit_value_get(&devlink->param_list,
@@ -8600,7 +8886,7 @@ int devlink_port_param_driverinit_value_get(struct devlink_port *devlink_port,
 {
 	struct devlink *devlink = devlink_port->devlink;
 
-	if (!devlink_reload_supported(devlink))
+	if (!devlink_reload_supported(devlink->ops))
 		return -EOPNOTSUPP;
 
 	return __devlink_param_driverinit_value_get(&devlink_port->param_list,
@@ -9724,6 +10010,7 @@ int devlink_compat_switch_id_get(struct net_device *dev,
 
 static void __net_exit devlink_pernet_pre_exit(struct net *net)
 {
+	unsigned long actions_performed;
 	struct devlink *devlink;
 	int err;
 
@@ -9733,9 +10020,12 @@ static void __net_exit devlink_pernet_pre_exit(struct net *net)
 	mutex_lock(&devlink_mutex);
 	list_for_each_entry(devlink, &devlink_list, list) {
 		if (net_eq(devlink_net(devlink), net)) {
-			if (WARN_ON(!devlink_reload_supported(devlink)))
+			if (WARN_ON(!devlink_reload_supported(devlink->ops)))
 				continue;
-			err = devlink_reload(devlink, &init_net, NULL);
+			err = devlink_reload(devlink, &init_net,
+					     DEVLINK_RELOAD_ACTION_DRIVER_REINIT,
+					     DEVLINK_RELOAD_LIMIT_UNSPEC,
+					     NULL, &actions_performed);
 			if (err && err != -EOPNOTSUPP)
 				pr_warn("Failed to reload devlink instance into init_net\n");
 		}
