@@ -2844,10 +2844,16 @@ extern int apply_to_existing_page_range(struct mm_struct *mm,
 #ifdef CONFIG_PAGE_POISONING
 extern bool page_poisoning_enabled(void);
 extern void kernel_poison_pages(struct page *page, int numpages, int enable);
+
+void inc_page_usage(unsigned long pfn);
+void dec_page_usage(unsigned long pfn);
 #else
 static inline bool page_poisoning_enabled(void) { return false; }
 static inline void kernel_poison_pages(struct page *page, int numpages,
 					int enable) { }
+
+static inline void inc_page_usage(unsigned long pfn) {}
+static inline void dec_page_usage(unsigned long pfn) {}
 #endif
 
 #ifdef CONFIG_INIT_ON_ALLOC_DEFAULT_ON

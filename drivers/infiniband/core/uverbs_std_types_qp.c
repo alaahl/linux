@@ -9,12 +9,12 @@
 #include "core_priv.h"
 
 static int uverbs_free_qp(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	struct ib_qp *qp = uobject->object;
 	struct ib_uqp_object *uqp =
 		container_of(uobject, struct ib_uqp_object, uevent.uobject);
+	struct ib_udata *udata = &attrs->driver_udata;
 	int ret;
 
 	/*
@@ -24,22 +24,22 @@ static int uverbs_free_qp(struct ib_uobject *uobject,
 	 * because the mcast attaches are not ubojects and will not be
 	 * destroyed by anything else during cleanup processing.
 	 */
-	if (why == RDMA_REMOVE_DESTROY) {
+	if (udata) {
 		if (!list_empty(&uqp->mcast_list))
 			return -EBUSY;
 	} else if (qp == qp->real_qp) {
 		ib_uverbs_detach_umcast(qp, uqp);
 	}
 
-	ret = ib_destroy_qp_user(qp, &attrs->driver_udata);
-	if (ib_is_destroy_retryable(ret, why, uobject))
+	ret = ib_destroy_qp_user(qp, udata);
+	if (ret)
 		return ret;
 
 	if (uqp->uxrcd)
 		atomic_dec(&uqp->uxrcd->refcnt);
 
 	ib_uverbs_release_uevent(&uqp->uevent);
-	return ret;
+	return 0;
 }
 
 static int check_creation_flags(enum ib_qp_type qp_type,
@@ -251,8 +251,8 @@ static int UVERBS_HANDLER(UVERBS_METHOD_QP_CREATE)(
 	if (attr.qp_type == IB_QPT_XRC_TGT)
 		qp = ib_create_qp(pd, &attr);
 	else
-		qp = _ib_create_qp(device, pd, &attr, &attrs->driver_udata,
-				   obj);
+		qp = _ib_create_qp(device, pd, &attr, &attrs->driver_udata, obj,
+				   NULL);
 
 	if (IS_ERR(qp)) {
 		ret = PTR_ERR(qp);

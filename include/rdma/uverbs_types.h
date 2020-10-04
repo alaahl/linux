@@ -99,7 +99,6 @@ struct uverbs_obj_idr_type {
 	 * completely unchanged.
 	 */
 	int __must_check (*destroy_object)(struct ib_uobject *uobj,
-					   enum rdma_remove_reason why,
 					   struct uverbs_attr_bundle *attrs);
 };
 
@@ -138,8 +137,8 @@ struct uverbs_obj_fd_type {
 	 * because the driver is removed or the FD is closed.
 	 */
 	struct uverbs_obj_type  type;
-	int (*destroy_object)(struct ib_uobject *uobj,
-			      enum rdma_remove_reason why);
+	void (*destroy_object)(struct ib_uobject *uobj,
+			       enum rdma_remove_reason why);
 	const struct file_operations	*fops;
 	const char			*name;
 	int				flags;

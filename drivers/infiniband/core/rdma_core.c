@@ -130,17 +130,6 @@ static int uverbs_destroy_uobject(struct ib_uobject *uobj,
 	lockdep_assert_held(&ufile->hw_destroy_rwsem);
 	assert_uverbs_usecnt(uobj, UVERBS_LOOKUP_WRITE);
 
-	if (reason == RDMA_REMOVE_ABORT_HWOBJ) {
-		reason = RDMA_REMOVE_ABORT;
-		ret = uobj->uapi_object->type_class->destroy_hw(uobj, reason,
-								attrs);
-		/*
-		 * Drivers are not permitted to ignore RDMA_REMOVE_ABORT, see
-		 * ib_is_destroy_retryable, cleanup_retryable == false here.
-		 */
-		WARN_ON(ret);
-	}
-
 	if (reason == RDMA_REMOVE_ABORT) {
 		WARN_ON(!list_empty(&uobj->list));
 		WARN_ON(!uobj->context);
@@ -148,15 +137,9 @@ static int uverbs_destroy_uobject(struct ib_uobject *uobj,
 	} else if (uobj->object) {
 		ret = uobj->uapi_object->type_class->destroy_hw(uobj, reason,
 								attrs);
-		if (ret) {
-			if (ib_is_destroy_retryable(ret, reason, uobj))
-				return ret;
-
-			/* Nothing to be done, dangle the memory and move on */
-			WARN(true,
-			     "ib_uverbs: failed to remove uobject id %d, driver err=%d",
-			     uobj->id, ret);
-		}
+		if (ret)
+			/* Nothing to be done, wait till ucontext will clean it */
+			return ret;
 
 		uobj->object = NULL;
 	}
@@ -552,18 +535,10 @@ static int __must_check destroy_hw_idr_uobject(struct ib_uobject *uobj,
 	const struct uverbs_obj_idr_type *idr_type =
 		container_of(uobj->uapi_object->type_attrs,
 			     struct uverbs_obj_idr_type, type);
-	int ret = idr_type->destroy_object(uobj, why, attrs);
+	int ret = idr_type->destroy_object(uobj, attrs);
 
-	/*
-	 * We can only fail gracefully if the user requested to destroy the
-	 * object or when a retry may be called upon an error.
-	 * In the rest of the cases, just remove whatever you can.
-	 */
-	if (ib_is_destroy_retryable(ret, why, uobj))
+	if (ret)
 		return ret;
-
-	if (why == RDMA_REMOVE_ABORT)
-		return 0;
 
 	ib_rdmacg_uncharge(&uobj->cg_obj, uobj->context->device,
 			   RDMACG_RESOURCE_HCA_OBJECT);
@@ -592,11 +567,8 @@ static int __must_check destroy_hw_fd_uobject(struct ib_uobject *uobj,
 {
 	const struct uverbs_obj_fd_type *fd_type = container_of(
 		uobj->uapi_object->type_attrs, struct uverbs_obj_fd_type, type);
-	int ret = fd_type->destroy_object(uobj, why);
 
-	if (ib_is_destroy_retryable(ret, why, uobj))
-		return ret;
-
+	fd_type->destroy_object(uobj, why);
 	return 0;
 }
 
@@ -674,11 +646,22 @@ void rdma_alloc_abort_uobject(struct ib_uobject *uobj,
 			      bool hw_obj_valid)
 {
 	struct ib_uverbs_file *ufile = uobj->ufile;
+	int ret;
 
-	uverbs_destroy_uobject(uobj,
-			       hw_obj_valid ? RDMA_REMOVE_ABORT_HWOBJ :
-					      RDMA_REMOVE_ABORT,
-			       attrs);
+	if (hw_obj_valid) {
+		ret = uobj->uapi_object->type_class->destroy_hw(
+			uobj, RDMA_REMOVE_ABORT, attrs);
+		/*
+		 * If the driver couldn't destroy the object then go ahead and
+		 * commit it. Leaking objects that can't be destroyed is only
+		 * done during FD close after the driver has a few more tries to
+		 * destroy it.
+		 */
+		if (WARN_ON(ret))
+			return rdma_alloc_commit_uobject(uobj, attrs);
+	}
+
+	uverbs_destroy_uobject(uobj, RDMA_REMOVE_ABORT, attrs);
 
 	/* Matches the down_read in rdma_alloc_begin_uobject */
 	up_read(&ufile->hw_destroy_rwsem);
@@ -831,10 +814,9 @@ static void ufile_destroy_ucontext(struct ib_uverbs_file *ufile,
 	ib_rdmacg_uncharge(&ucontext->cg_obj, ib_dev,
 			   RDMACG_RESOURCE_HCA_HANDLE);
 
-	rdma_restrack_del(&ucontext->res);
-
 	ib_dev->ops.dealloc_ucontext(ucontext);
 	WARN_ON(!xa_empty(&ucontext->mmap_xa));
+	rdma_restrack_del(&ucontext->res);
 	kfree(ucontext);
 
 	ufile->ucontext = NULL;
@@ -880,6 +862,9 @@ static int __uverbs_cleanup_ufile(struct ib_uverbs_file *ufile,
 void uverbs_destroy_ufile_hw(struct ib_uverbs_file *ufile,
 			     enum rdma_remove_reason reason)
 {
+	struct ib_uobject *obj, *next_obj;
+	unsigned long flags;
+
 	down_write(&ufile->hw_destroy_rwsem);
 
 	/*
@@ -889,21 +874,26 @@ void uverbs_destroy_ufile_hw(struct ib_uverbs_file *ufile,
 	if (!ufile->ucontext)
 		goto done;
 
-	ufile->ucontext->closing = true;
-	ufile->ucontext->cleanup_retryable = true;
 	while (!list_empty(&ufile->uobjects))
 		if (__uverbs_cleanup_ufile(ufile, reason)) {
 			/*
 			 * No entry was cleaned-up successfully during this
-			 * iteration
+			 * iteration. It is a driver bug to fail destruction.
 			 */
+			WARN_ON(!list_empty(&ufile->uobjects));
 			break;
 		}
 
-	ufile->ucontext->cleanup_retryable = false;
-	if (!list_empty(&ufile->uobjects))
-		__uverbs_cleanup_ufile(ufile, reason);
-
+	list_for_each_entry_safe (obj, next_obj, &ufile->uobjects, list) {
+		spin_lock_irqsave(&ufile->uobjects_lock, flags);
+		list_del_init(&obj->list);
+		spin_unlock_irqrestore(&ufile->uobjects_lock, flags);
+		/*
+		 * Pairs with the get in rdma_alloc_commit_uobject(), could
+		 * destroy uobj.
+		 */
+		uverbs_uobject_put(obj);
+	}
 	ufile_destroy_ucontext(ufile, reason);
 
 done:
