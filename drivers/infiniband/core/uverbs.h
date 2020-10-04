@@ -239,7 +239,6 @@ void ib_uverbs_qp_event_handler(struct ib_event *event, void *context_ptr);
 void ib_uverbs_wq_event_handler(struct ib_event *event, void *context_ptr);
 void ib_uverbs_srq_event_handler(struct ib_event *event, void *context_ptr);
 int ib_uverbs_dealloc_xrcd(struct ib_uobject *uobject, struct ib_xrcd *xrcd,
-			   enum rdma_remove_reason why,
 			   struct uverbs_attr_bundle *attrs);
 
 int uverbs_dealloc_mw(struct ib_mw *mw);

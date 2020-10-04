@@ -8,7 +8,6 @@
 #include "uverbs.h"
 
 static int uverbs_free_wq(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	struct ib_wq *wq = uobject->object;
@@ -16,12 +15,12 @@ static int uverbs_free_wq(struct ib_uobject *uobject,
 		container_of(uobject, struct ib_uwq_object, uevent.uobject);
 	int ret;
 
-	ret = ib_destroy_wq(wq, &attrs->driver_udata);
-	if (ib_is_destroy_retryable(ret, why, uobject))
+	ret = ib_destroy_wq_user(wq, &attrs->driver_udata);
+	if (ret)
 		return ret;
 
 	ib_uverbs_release_uevent(&uwq->uevent);
-	return ret;
+	return 0;
 }
 
 static int UVERBS_HANDLER(UVERBS_METHOD_WQ_CREATE)(

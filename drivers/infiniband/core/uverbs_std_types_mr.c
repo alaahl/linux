@@ -33,9 +33,9 @@
 #include "rdma_core.h"
 #include "uverbs.h"
 #include <rdma/uverbs_std_types.h>
+#include "restrack.h"
 
 static int uverbs_free_mr(struct ib_uobject *uobject,
-			  enum rdma_remove_reason why,
 			  struct uverbs_attr_bundle *attrs)
 {
 	return ib_dereg_mr_user((struct ib_mr *)uobject->object,
@@ -134,6 +134,9 @@ static int UVERBS_HANDLER(UVERBS_METHOD_DM_MR_REG)(
 	atomic_inc(&pd->usecnt);
 	atomic_inc(&dm->usecnt);
 
+	rdma_restrack_new(&mr->res, RDMA_RESTRACK_MR);
+	rdma_restrack_set_name(&mr->res, NULL);
+	rdma_restrack_add(&mr->res);
 	uobj->object = mr;
 
 	uverbs_finalize_uobj_create(attrs, UVERBS_ATTR_REG_DM_MR_HANDLE);

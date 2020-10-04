@@ -974,11 +974,16 @@ struct mlx5_ifc_device_mem_cap_bits {
 	u8         log_sw_icm_alloc_granularity[0x6];
 	u8         log_steering_sw_icm_size[0x8];
 
-	u8         reserved_at_120[0x20];
+	u8         reserved_at_120[0x18];
+	u8         log_header_modify_pattern_sw_icm_size[0x8];
 
 	u8         header_modify_sw_icm_start_address[0x40];
 
-	u8         reserved_at_180[0x680];
+	u8         reserved_at_180[0x40];
+
+	u8         header_modify_pattern_sw_icm_start_address[0x40];
+
+	u8         reserved_at_1c0[0x600];
 };
 
 struct mlx5_ifc_device_event_cap_bits {
@@ -1431,7 +1436,8 @@ struct mlx5_ifc_cmd_hca_cap_bits {
 
 	u8         log_bf_reg_size[0x5];
 
-	u8         reserved_at_270[0x8];
+	u8         reserved_at_270[0x6];
+	u8         lag_dct[0x2];
 	u8         lag_tx_port_affinity[0x1];
 	u8         reserved_at_279[0x2];
 	u8         lag_master[0x1];

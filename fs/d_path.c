@@ -8,6 +8,8 @@
 #include <linux/prefetch.h>
 #include "mount.h"
 
+#include "internal.h"
+
 static int prepend(char **buffer, int *buflen, const char *str, int namelen)
 {
 	*buflen -= namelen;
